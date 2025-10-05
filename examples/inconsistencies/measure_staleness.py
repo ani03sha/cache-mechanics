@@ -41,13 +41,18 @@ def writer_thread(
     cache: SimpleCache,
     key: str,
     num_updates: int,
-    write_delay: float
+    write_delay: float,
+    cache_update_delay: float = 0.005
 ) -> None:
     """
     Continuously update database and cache.
 
     Simulates write-through pattern: DB write -> cache update
     The gap between these operations is where staleness occurs!
+
+    Args:
+        cache_update_delay: Simulates network latency or async propagation delay
+                           between DB write and cache update (default 5ms)
     """
     for i in range(num_updates):
         new_value = f"version_{i}"
@@ -55,9 +60,11 @@ def writer_thread(
         # Step 1: Write to database (slow)
         db.write(key, new_value, delay=write_delay)
 
-        # TODO(human): Update cache after database write
+        # Simulate propagation delay (network latency, async updates, etc.)
+        time.sleep(cache_update_delay)
+
         # Step 2: Update cache
-        pass
+        cache.set(key, new_value)
 
         # Small random delay between updates
         time.sleep(random.uniform(0.001, 0.005))
@@ -83,7 +90,8 @@ def measure_staleness_basic():
     cache.set(key, initial_value)
 
     print(f"Initial state: {initial_value}")
-    print(f"Running {1000} reads while writer updates concurrently...\n")
+    print(f"Simulating 5ms cache propagation delay...")
+    print(f"Running 1000 reads while writer updates concurrently...\n")
 
     # Start writer thread
     num_updates = 100
@@ -119,24 +127,26 @@ def measure_staleness_basic():
     print(f"Stale reads: {stale_count}")
     print(f"Staleness Ratio: {staleness_ratio:.2%}")
     print(f"Cache hit accuracy: {(1 - staleness_ratio):.2%}")
+    if stale_count > 0:
+        print(f"Cache served stale data {stale_count} times during concurrent updates!")
 
 
 def measure_staleness_with_varying_delays():
     """
-    Advanced measurement: Test staleness under different write delays.
+    Advanced measurement: Test staleness under different cache propagation delays.
 
-    Shows how write latency affects staleness probability.
+    Shows how cache update latency affects staleness probability.
     """
     print("\n" + "=" * 70)
-    print("STALENESS vs WRITE DELAY")
+    print("STALENESS vs CACHE PROPAGATION DELAY")
     print("=" * 70)
 
-    write_delays = [0.001, 0.005, 0.01, 0.02, 0.05]
+    cache_propagation_delays = [0.001, 0.005, 0.01, 0.02, 0.05]
 
-    print(f"{'Write Delay':<15} {'Staleness Ratio':<20} {'Stale Reads'}")
+    print(f"{'Propagation Delay':<20} {'Staleness Ratio':<20} {'Stale Reads'}")
     print("-" * 70)
 
-    for write_delay in write_delays:
+    for cache_delay in cache_propagation_delays:
         db = DatabaseSimulator()
         cache = SimpleCache(default_ttl=10.0)
 
@@ -144,10 +154,10 @@ def measure_staleness_with_varying_delays():
         db.set_initial(key, "v0")
         cache.set(key, "v0")
 
-        # Start writer
+        # Start writer with varying cache propagation delay
         writer = threading.Thread(
             target=writer_thread,
-            args=(db, cache, key, 50, write_delay),
+            args=(db, cache, key, 50, 0.01, cache_delay),
             daemon=True
         )
         writer.start()
@@ -168,7 +178,7 @@ def measure_staleness_with_varying_delays():
         writer.join()
 
         staleness_ratio = stale_count / total_reads
-        print(f"{write_delay * 1000:>6.1f}ms        {staleness_ratio:>6.2%}               {stale_count}/{total_reads}")
+        print(f"{cache_delay * 1000:>8.1f}ms           {staleness_ratio:>6.2%}               {stale_count}/{total_reads}")
 
 
 def measure_staleness_multiple_writers():
@@ -189,7 +199,9 @@ def measure_staleness_multiple_writers():
     cache.set(key, 0)
 
     num_writers = 3
+    cache_propagation_delay = 0.01  # 10ms delay
     print(f"Spawning {num_writers} concurrent writers...")
+    print(f"Cache propagation delay: {cache_propagation_delay * 1000}ms")
     print(f"Measuring staleness over 1000 reads...\n")
 
     # Start multiple writers
@@ -197,7 +209,7 @@ def measure_staleness_multiple_writers():
     for i in range(num_writers):
         writer = threading.Thread(
             target=writer_thread,
-            args=(db, cache, key, 50, 0.01),
+            args=(db, cache, key, 50, 0.01, cache_propagation_delay),
             daemon=True
         )
         writers.append(writer)
